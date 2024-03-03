@@ -609,7 +609,24 @@ defmodule Raft do
             " index #{index}, succcess #{succ}"
         )
 
-        raise "Not yet implemented"
+        if succ do #handle successful responses
+        else #handle failed responses
+          #decrement next index of the sender
+          state = %{state | next_index:
+          Map.put(state.next_index, sender, state.next_index[sender]-1)}
+          #retry append entry
+          send(sender,
+            %Raft.AppendEntryRequest{ 
+            term: state.current_term,
+            leader_id: state.current_leader,
+            prev_log_index: state.prev_log_index,
+            prev_log_term: state.prev_log_term,
+            entries: get_log_suffix(state, state.next_index[sender]), #send log starting at next index
+            leader_commit_index: state.commit_index
+          })
+          leader(state, extra_state)
+
+        end
 
       {sender,
        %Raft.RequestVote{
