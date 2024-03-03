@@ -260,13 +260,15 @@ defmodule Raft do
   """
   @spec try_to_commit(%Raft{}) :: %Raft{}
   def try_to_commit(state) do
-    (state.commit_index + 1)..(get_last_log_index(state)) |> Enum.reverse |> Enum.each(fn(index, log_idx) ->
-      Map.to_list(state.match_index) |> Enum.each(fn(idx, match_idx) ->
-        if (match_idx >= log_idx) && (get_log_entry(state, log_idx).term == state.current_term) do
-          %{state | commit_index: log_idx} #update commit index to largest possible log index
-        end
+    if (get_last_log_index(state) > 0) do
+      (state.commit_index + 1)..(get_last_log_index(state)) |> Enum.reverse |> Enum.each(fn(log_idx) ->
+        Map.to_list(state.match_index) |> Enum.each(fn(match_idx) ->
+          if (match_idx >= log_idx) && (get_log_entry(state, log_idx).term == state.current_term) do
+            %{state | commit_index: log_idx} #update commit index to largest possible log index
+          end
+        end)
       end)
-    end)
+    end
     state
   end
 
@@ -438,7 +440,8 @@ defmodule Raft do
           # 4. Append any new entries not already in the log
           # 5. If leaderCommit > commitIndex, set commitIndex =
           # min(leaderCommit, index of last new entry)
-          if (term < state.current_term || prev_log_index > get_last_log_index(state) || prev_log_term != get_log_entry(state, prev_log_index).term) do
+          if (term < state.current_term || prev_log_index > get_last_log_index(state) 
+          || (get_last_log_index(state) > 0 && (prev_log_term != get_log_entry(state, prev_log_index).term))) do
             #return Failure
             send(sender,
             %Raft.AppendEntryResponse{
@@ -578,7 +581,7 @@ defmodule Raft do
          leader_commit_index: nil
          })
 
-    leader(make_leader(state), nil)
+    leader(make_leader(state), %{})
   end
 
   @doc """
@@ -637,7 +640,7 @@ defmodule Raft do
           state = try_to_commit(state)
           #commit new entries if last applied < commit index
           if (state.commit_index > state.last_applied) do
-            (state.last_applied+1)..state.commit_index |> Enum.each(fn(idx, log_idx) ->
+            (state.last_applied+1)..state.commit_index |> Enum.each(fn(log_idx) ->
               case commit_log_index(state, log_idx) do
                 {{r,msg}, _} ->
                   send(r, msg) #reply to client on successful commit 
