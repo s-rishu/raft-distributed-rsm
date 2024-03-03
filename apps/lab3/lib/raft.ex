@@ -256,6 +256,21 @@ defmodule Raft do
   end
 
   @doc """
+  Try to update the commit index. This does not applies the commit.
+  """
+  @spec try_to_commit(%Raft{}) :: %Raft{}
+  def try_to_commit(state) do
+    (state.commit_index + 1)..(get_last_log_index(state)) |> Enum.reverse |> Enum.each(fn(index, log_idx) ->
+      Map.to_list(state.match_index) |> Enum.each(fn(idx, match_idx) ->
+        if (match_idx >= log_idx) && (get_log_entry(state, log_idx).term == state.current_term) do
+          %{state | commit_index: log_idx} #update commit index to largest possible log index
+        end
+      end)
+    end)
+    state
+  end
+
+  @doc """
   make_leader changes process state for a process that
   has just been elected leader.
   """
@@ -610,6 +625,28 @@ defmodule Raft do
         )
 
         if succ do #handle successful responses
+          #update next index
+          state = %{state | next_index:
+          Map.put(state.next_index, sender, index + 1)}
+          #update match index
+          state = %{state | match_index:
+          Map.put(state.match_index, sender, index)}
+          #increment number of responses for client request
+          extra_state = Map.put(extra_state, index , extra_state[index]+1)
+          #try to update commit index if possible (majority responded)
+          state = try_to_commit(state)
+          #commit new entries if last applied < commit index
+          if (state.commit_index > state.last_applied) do
+            (state.last_applied+1)..state.commit_index |> Enum.each(fn(idx, log_idx) ->
+              case commit_log_index(state, log_idx) do
+                {{r,msg}, _} ->
+                  send(r, msg) #reply to client on successful commit 
+                _ ->
+                  IO.puts("Nothing to do.")
+              end
+            end)
+            state = %{state | last_applied: state.commit_index}
+          end
         else #handle failed responses
           #decrement next index of the sender
           state = %{state | next_index:
@@ -624,9 +661,8 @@ defmodule Raft do
             entries: get_log_suffix(state, state.next_index[sender]), #send log starting at next index
             leader_commit_index: state.commit_index
           })
-          leader(state, extra_state)
-
         end
+        leader(state, extra_state)
 
       {sender,
        %Raft.RequestVote{
@@ -671,17 +707,17 @@ defmodule Raft do
           )
 
         # append entry to local log, respond after entry applied to state 
-        add_log_entries([entry])
+        add_log_entries(state, [entry])
         broadcast_to_others(state, %Raft.AppendEntryRequest{ #broadcasting once is enough since no packet loss
          term: state.current_term,
          leader_id: state.current_leader,
-         prev_log_index: state.prev_log_index,
-         prev_log_term: state.prev_log_term,
+         prev_log_index: get_last_log_index(state),
+         prev_log_term: get_last_log_term(state),
          entries: [entry],
          leader_commit_index: state.commit_index
        })
 
-        #using extra state to record client requests
+        #using extra state to record number of successful responses to client requests
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
         leader(state, extra_state)
 
@@ -696,12 +732,12 @@ defmodule Raft do
             item
           )
         # append entry to local log, respond after entry applied to state 
-        add_log_entries([entry])
+        add_log_entries(state, [entry])
         broadcast_to_others(state, %Raft.AppendEntryRequest{ #broadcasting once is enough since no packet loss
          term: state.current_term,
          leader_id: state.current_leader,
-         prev_log_index: state.prev_log_index,
-         prev_log_term: state.prev_log_term,
+         prev_log_index: get_last_log_index(state),
+         prev_log_term: get_last_log_term(state),
          entries: [entry],
          leader_commit_index: state.commit_index
        })
@@ -719,12 +755,12 @@ defmodule Raft do
             sender
           )
         # append entry to local log, respond after entry applied to state machine
-        add_log_entries([entry])
+        add_log_entries(state, [entry])
         broadcast_to_others(state, %Raft.AppendEntryRequest{
          term: state.current_term,
          leader_id: state.current_leader,
-         prev_log_index: state.prev_log_index,
-         prev_log_term: state.prev_log_term,
+         prev_log_index: get_last_log_index(state),
+         prev_log_term: get_last_log_term(state),
          entries: [entry],
          leader_commit_index: state.commit_index
        })
