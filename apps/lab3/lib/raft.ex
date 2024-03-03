@@ -663,7 +663,9 @@ defmodule Raft do
          entries: [entry],
          leader_commit_index: state.commit_index
        })
-        # TODO: You might need to update the following call.
+
+        #using extra state to record client requests
+        extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
         leader(state, extra_state)
 
       {sender, {:enq, item}} ->
@@ -686,7 +688,8 @@ defmodule Raft do
          entries: [entry],
          leader_commit_index: state.commit_index
        })
-        # TODO: You might need to update the following call.
+        #using extra state to record client requests
+        extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
         leader(state, extra_state)
 
       {sender, :deq} ->
@@ -708,7 +711,8 @@ defmodule Raft do
          entries: [entry],
          leader_commit_index: state.commit_index
        })
-        # TODO: You might need to update the following call.
+        #using extra state to record client requests
+        extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
         leader(state, extra_state)
 
       # Messages for debugging [Do not modify existing ones,
