@@ -385,7 +385,7 @@ defmodule Raft do
     if state.election_timer do
       Emulation.cancel_timer(state.election_timer) 
     end
-    election_timer = Emulation.timer(get_election_time(state))
+    election_timer = Emulation.timer(get_election_time(state), :election_timeout)
     save_election_timer(state, election_timer)
   end
 
@@ -400,7 +400,7 @@ defmodule Raft do
     if state.heartbeat_timer do
       Emulation.cancel_timer(state.heartbeat_timer) 
     end
-    heartbeat_timer = Emulation.timer(state.heartbeat_timeout)
+    heartbeat_timer = Emulation.timer(state.heartbeat_timeout, :heartbeat_timeout)
     save_heartbeat_timer(state, heartbeat_timer)
   end
 
@@ -590,6 +590,9 @@ defmodule Raft do
       # Messages from external clients. In each case we
       # tell the client that it should go talk to the
       # leader.
+      :election_timeout ->
+        become_candidate(state)
+
       {sender, :nop} ->
         # IO.puts("Server #{whoami()} redirecting client to leader #{state.current_leader}.")
         send(sender, {:redirect, state.current_leader})
