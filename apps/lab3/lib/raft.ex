@@ -818,6 +818,19 @@ defmodule Raft do
         end
         raise "Not yet implemented"
 
+      :heartbeat_timeout ->
+        broadcast_to_others(state,
+         %Raft.AppendEntryRequest{
+         term: state.current_term,
+         leader_id: state.current_leader,
+         prev_log_index: nil,
+         prev_log_term: nil,
+         entries: nil,
+         leader_commit_index: nil
+         })
+         
+        leader(reset_heartbeat_timer(state), extra_state)
+
       # Messages from external clients. For all of what follows
       # you should send the `sender` an :ok (see `Raft.Client`
       # below) only after the request has completed, i.e., after
@@ -846,7 +859,7 @@ defmodule Raft do
 
         #using extra state to record number of successful responses to client requests
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
-        leader(state, extra_state)
+        leader(reset_heartbeat_timer(state), extra_state)
 
       {sender, {:enq, item}} ->
         # entry is the log entry that you need to
@@ -871,7 +884,7 @@ defmodule Raft do
         #using extra state to record client requests
         #
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
-        leader(state, extra_state)
+        leader(reset_heartbeat_timer(state), extra_state)
 
       {sender, :deq} ->
         # entry is the log entry that you need to
@@ -894,7 +907,7 @@ defmodule Raft do
        })
         #using extra state to record client requests
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
-        leader(state, extra_state)
+        leader(reset_heartbeat_timer(state), extra_state)
 
       # Messages for debugging [Do not modify existing ones,
       # but feel free to add new ones.]
