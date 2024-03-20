@@ -948,10 +948,20 @@ defmodule Raft do
   """
   @spec become_candidate(%Raft{is_leader: false}) :: no_return()
   def become_candidate(state) do
-    # TODO:   Send out any messages that need to be sent out
-    # you might need to update the call to candidate below.
-    raise "Not yet implemented"
-    candidate(state, nil)
+    #On conversion to candidate, start election:
+    # • Increment currentTerm
+    # • Vote for self
+    # • Reset election timer
+    # • Send RequestVote RPCs to all other servers
+    state = %{state | current_term: state.current_term+1, voted_for: whoami()}
+    state = reset_election_timer(state)
+    broadcast_to_others(state, %Raft.RequestVote{
+                                  term: state.current_term,
+                                  candidate_id: whoami(),
+                                  last_log_index: get_last_log_index(state),
+                                  last_log_term: get_last_log_term(state),
+                                })
+    candidate(state, %{voteCount: 1}) #using extra_space to track vote count
   end
 
   @doc """
@@ -1036,6 +1046,8 @@ defmodule Raft do
         end
         raise "Not yet implemented"
 
+      :election_timeout ->
+        become_candidate(state)
       # Messages from external clients.
       {sender, :nop} ->
         # Redirect in hopes that the current process
