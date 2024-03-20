@@ -442,6 +442,9 @@ defmodule Raft do
           "Received append entry for term #{term} with leader #{leader_id} " <>
             "(#{leader_commit_index})"
         )
+        state = if (term > state.current_term) do
+          %{state | current_term: term}
+        else state end
 
         state = (
         if entries do
@@ -532,7 +535,9 @@ defmodule Raft do
           "Follower received append entry response #{term}," <>
             " index #{index}, succcess #{inspect(succ)} and did nothing."
         )
-
+        state = if (term > state.current_term) do
+          %{state | current_term: term}
+        else state end
         follower(state, extra_state)
 
       {sender,
@@ -547,9 +552,13 @@ defmodule Raft do
           "Follower received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
+        state = if (term > state.current_term) do
+          %{state | current_term: term}
+        else state end
         # 1. Reply false if term < currentTerm (§5.1)
         # 2. If votedFor is null or candidateId, and candidate’s log is at
         # least as up-to-date as receiver’s log, grant vote
+        
         if (term < state.current_term) do
           send(sender,
             %Raft.RequestVoteResponse{
@@ -588,7 +597,9 @@ defmodule Raft do
           "Follower received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)} and did nothing."
         )
-
+        state = if (term > state.current_term) do
+          %{state | current_term: term}
+        else state end
         follower(state, extra_state)
 
       # Messages from external clients. In each case we
