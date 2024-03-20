@@ -385,7 +385,7 @@ defmodule Raft do
     if state.election_timer do
       Emulation.cancel_timer(state.election_timer) 
     end
-    election_timer = Emulation.timer(state.election_timeout)
+    election_timer = Emulation.timer(get_election_time(state))
     save_election_timer(state, election_timer)
   end
 
