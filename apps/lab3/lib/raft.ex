@@ -381,9 +381,12 @@ defmodule Raft do
   # to call this function from within your code.
   @spec reset_election_timer(%Raft{}) :: %Raft{}
   defp reset_election_timer(state) do
-    # TODO: Set a new election timer
-    # You might find `save_election_timer` of use.
-    raise "Not yet implemented"
+    # Set a new election timer
+    if state.election_timer do
+      Emulation.cancel_timer(state.election_timer) 
+    end
+    election_timer = Emulation.timer(state.election_timeout)
+    save_election_timer(state, election_timer)
   end
 
   # This function should cancel the current
@@ -394,7 +397,9 @@ defmodule Raft do
   defp reset_heartbeat_timer(state) do
     # Set a new heartbeat timer.
     # You might find `save_heartbeat_timer` of use.
-    Emulation.cancel_timer(state.heartbeat_timer) 
+    if state.heartbeat_timer do
+      Emulation.cancel_timer(state.heartbeat_timer) 
+    end
     heartbeat_timer = Emulation.timer(state.heartbeat_timeout)
     save_heartbeat_timer(state, heartbeat_timer)
   end
