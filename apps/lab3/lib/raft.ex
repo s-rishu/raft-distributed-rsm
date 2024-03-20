@@ -443,6 +443,7 @@ defmodule Raft do
             "(#{leader_commit_index})"
         )
 
+        state = (
         if entries do
           #handle non empty requests using the following rules
           # 1. Reply false if term < currentTerm (§5.1)
@@ -467,7 +468,7 @@ defmodule Raft do
             })
             # IO.puts("debug 2")
             # IO.inspect(state)
-            follower(state, extra_state)
+            state
           else
             state = (if (logged?(state, prev_log_index + 1)) do #conflicting entry exists
                       truncate_log_at_index(state, prev_log_index + 1)
@@ -508,17 +509,17 @@ defmodule Raft do
               })
             # IO.puts("debug 5")
             # IO.inspect(state)
-            follower(state, extra_state)
+            state
           end
         else
-          #TODO: handle empty requests(heartbeat), do we need to send back a response?
-          state = %{state | current_leader: leader_id}
-          IO.puts("Received a heartbeat from #{leader_id}")
-          follower(state, extra_state)
+          state
         end
+        )
+
+        state = %{state | current_leader: leader_id}
+        state = reset_election_timer(state)
+        follower(state, extra_state)
         
-
-
       {sender,
        %Raft.AppendEntryResponse{
          term: term,
@@ -564,14 +565,17 @@ defmodule Raft do
               term: term,
               granted: true
             })
+            state = reset_election_timer(state)
+            state = %{state | voted_for: candidate}
+            follower(state, extra_state)
         else
           send(sender,
             %Raft.RequestVoteResponse{
               term: term,
               granted: false
             })
+          follower(state, extra_state)
         end  
-        follower(state, extra_state)
 
 
       {sender,
@@ -686,8 +690,12 @@ defmodule Raft do
           } " <>
             "(#{leader_commit_index})"
         )
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
 
-        raise "Not yet implemented"
+        leader(state, extra_state)
 
       {sender,
        %Raft.AppendEntryResponse{
@@ -700,6 +708,10 @@ defmodule Raft do
           "Received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
         )
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
 
         if succ do #handle successful responses
           #update next index
@@ -773,7 +785,10 @@ defmodule Raft do
           "Leader received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       {sender,
@@ -786,7 +801,10 @@ defmodule Raft do
           "Leader received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)}"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       # Messages from external clients. For all of what follows
@@ -937,7 +955,10 @@ defmodule Raft do
             "with leader #{leader_id} " <>
             "(#{leader_commit_index})"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       {sender,
@@ -951,7 +972,10 @@ defmodule Raft do
           "Candidate received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       {sender,
@@ -966,7 +990,10 @@ defmodule Raft do
           "Candidate received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       {sender,
@@ -979,7 +1006,10 @@ defmodule Raft do
           "Candidate received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)}"
         )
-
+        if (term > state.current_term) do
+          state = %{state | current_term: term}
+          become_follower(state)
+        end
         raise "Not yet implemented"
 
       # Messages from external clients.
