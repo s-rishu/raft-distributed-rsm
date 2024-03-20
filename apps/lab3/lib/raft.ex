@@ -529,10 +529,10 @@ defmodule Raft do
         # a follower.
         IO.puts(
           "Follower received append entry response #{term}," <>
-            " index #{index}, succcess #{inspect(succ)}"
+            " index #{index}, succcess #{inspect(succ)} and did nothing."
         )
 
-        raise "Not yet implemented"
+        follower(state, extra_state)
 
       {sender,
        %Raft.RequestVote{
@@ -541,14 +541,38 @@ defmodule Raft do
          last_log_index: last_log_index,
          last_log_term: last_log_term
        }} ->
-        # TODO: Handle a RequestVote call received by a
-        # follower.
+
         IO.puts(
           "Follower received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
+        # 1. Reply false if term < currentTerm (§5.1)
+        # 2. If votedFor is null or candidateId, and candidate’s log is at
+        # least as up-to-date as receiver’s log, grant vote
+        if (term < state.current_term) do
+          send(sender,
+            %Raft.RequestVoteResponse{
+              term: term,
+              granted: false
+            })
+          follower(state, extra_state)
+        end
 
-        raise "Not yet implemented"
+        if ((!state.voted_for) || (state.voted_for == candidate)) && (last_log_index >= get_last_log_index(state)) do
+          send(sender,
+            %Raft.RequestVoteResponse{
+              term: term,
+              granted: true
+            })
+        else
+          send(sender,
+            %Raft.RequestVoteResponse{
+              term: term,
+              granted: false
+            })
+        end  
+        follower(state, extra_state)
+
 
       {sender,
        %Raft.RequestVoteResponse{
@@ -558,16 +582,16 @@ defmodule Raft do
         # TODO: Handle a RequestVoteResponse.
         IO.puts(
           "Follower received RequestVoteResponse " <>
-            "term = #{term}, granted = #{inspect(granted)}"
+            "term = #{term}, granted = #{inspect(granted)} and did nothing."
         )
 
-        raise "Not yet implemented"
+        follower(state, extra_state)
 
       # Messages from external clients. In each case we
       # tell the client that it should go talk to the
       # leader.
       {sender, :nop} ->
-        IO.puts("Server #{whoami()} redirecting client to leader #{state.current_leader}.")
+        # IO.puts("Server #{whoami()} redirecting client to leader #{state.current_leader}.")
         send(sender, {:redirect, state.current_leader})
         follower(state, extra_state)
 
