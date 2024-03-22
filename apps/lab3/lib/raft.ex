@@ -5,6 +5,7 @@ defmodule Raft do
   # Shouldn't need to spawn anything from this module, but if you do
   # you should add spawn to the imports.
   import Emulation, only: [send: 2, timer: 1, now: 0, whoami: 0]
+  import Float, only: [ceil: 2]
 
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
@@ -433,7 +434,7 @@ defmodule Raft do
     # TODO: Do anything you need to when a process
     # transitions to a follower.
     # raise "Not yet implemented."  # will probably need to update for transition from leader to follower
-    follower(make_follower(state), %{})
+    follower(make_follower(reset_election_timer(state)), %{})
   end
 
   @doc """
@@ -461,11 +462,11 @@ defmodule Raft do
         # TODO: Handle an AppendEntryRequest received by a
         # follower
         IO.puts(
-          "Received append entry for term #{term} with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
+          "Follower #{whoami()} Received append entry for term #{term} with leader #{leader_id} " <>
+            "(#{leader_commit_index} #{inspect(entries)})"
         )
-        state = if (term > state.current_term) do
-          %{state | current_term: term}
+        state = if (term >= state.current_term) do
+          %{state | current_term: term, current_leader: leader_id, voted_for: nil}
         else state end
 
         state = (
@@ -482,7 +483,7 @@ defmodule Raft do
           # min(leaderCommit, index of last new entry)
           # IO.puts("debug 1")
           # IO.inspect(state)
-          if ((term < state.current_term) || prev_log_index > get_last_log_index(state) 
+          if ((term < state.current_term) || (prev_log_index > get_last_log_index(state)) 
             || (get_last_log_index(state) > 0 && (prev_log_term != get_log_entry(state, prev_log_index).term))) do
             #return Failure
             send(sender,
@@ -528,7 +529,6 @@ defmodule Raft do
         end
         )
 
-        state = %{state | current_leader: leader_id}
         state = reset_election_timer(state)
         follower(state, extra_state)
         
@@ -541,11 +541,11 @@ defmodule Raft do
         # TODO: Handle an AppendEntryResponse received by
         # a follower.
         IO.puts(
-          "Follower received append entry response #{term}," <>
+          "Follower #{whoami()} received append entry response #{term}," <>
             " index #{index}, succcess #{inspect(succ)} and did nothing."
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term}
+          %{state | current_term: term, voted_for: nil}
         else state end
         follower(state, extra_state)
 
@@ -558,20 +558,21 @@ defmodule Raft do
        }} ->
 
         IO.puts(
-          "Follower received RequestVote " <>
+          "Follower #{whoami()} received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term}
+          %{state | current_term: term, voted_for: nil}
         else state end
         # 1. Reply false if term < currentTerm (§5.1)
         # 2. If votedFor is null or candidateId, and candidate’s log is at
         # least as up-to-date as receiver’s log, grant vote
         
         if (term < state.current_term) do
+          IO.puts("Follower #{whoami()} vote not granted due to term less than curr term to candidate #{candidate}.")
           send(sender,
             %Raft.RequestVoteResponse{
-              term: term,
+              term: state.current_term,
               granted: false
             })
           follower(state, extra_state)
@@ -587,9 +588,10 @@ defmodule Raft do
             state = %{state | voted_for: candidate}
             follower(state, extra_state)
         else
+          IO.puts("Follower #{whoami()} vote not granted to candidate #{candidate}.")
           send(sender,
             %Raft.RequestVoteResponse{
-              term: term,
+              term: state.current_term,
               granted: false
             })
           follower(state, extra_state)
@@ -603,11 +605,11 @@ defmodule Raft do
        }} ->
         # TODO: Handle a RequestVoteResponse.
         IO.puts(
-          "Follower received RequestVoteResponse " <>
+          "Follower #{whoami()} received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)} and did nothing."
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term}
+          %{state | current_term: term, voted_for: nil}
         else state end
         follower(state, extra_state)
 
@@ -672,14 +674,14 @@ defmodule Raft do
     broadcast_to_others(state,
          %Raft.AppendEntryRequest{
          term: state.current_term,
-         leader_id: state.current_leader,
+         leader_id: whoami(),
          prev_log_index: nil,
          prev_log_term: nil,
          entries: nil,
          leader_commit_index: nil
          })
 
-    leader(make_leader(state), %{})
+    leader(make_leader(reset_heartbeat_timer(state)), %{})
   end
 
   @doc """
@@ -706,13 +708,13 @@ defmodule Raft do
        }} ->
         # TODO: Handle an AppendEntryRequest seen by the leader.
         IO.puts(
-          "Leader Received append entry for term #{term} with leader #{
+          "Leader #{whoami()} Received append entry for term #{term} with leader #{
             leader_id
           } " <>
             "(#{leader_commit_index})"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: leader_id}
           become_follower(state)
         end
 
@@ -726,7 +728,7 @@ defmodule Raft do
        }} ->
         # TODO: Handle an AppendEntryResposne received by the leader.
         IO.puts(
-          "Received append entry response #{term}," <>
+          "Leader #{whoami()} received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
         )
         if (term > state.current_term) do
@@ -803,14 +805,15 @@ defmodule Raft do
        }} ->
         # TODO: Handle a RequestVote call at the leader.
         IO.puts(
-          "Leader received RequestVote " <>
+          "Leader #{whoami()} received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
         if (term > state.current_term) do
+          IO.puts("Leader #{whoami()} converting to follower.")
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        leader(state, extra_state)
 
       {sender,
        %Raft.RequestVoteResponse{
@@ -819,14 +822,14 @@ defmodule Raft do
        }} ->
         # TODO: Handle RequestVoteResponse at a leader.         
         IO.puts(
-          "Leader received RequestVoteResponse " <>
+          "Leader #{whoami()} received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)}"
         )
         if (term > state.current_term) do
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        leader(state, extra_state)
 
       :heartbeat_timeout ->
         broadcast_to_others(state,
@@ -996,12 +999,12 @@ defmodule Raft do
        }} ->
         # TODO: Handle an AppendEntryRequest as a candidate
         IO.puts(
-          "Candidate received append entry for term #{term} " <>
+          "Candidate #{whoami()} received append entry for term #{term} " <>
             "with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
+            "(#{leader_commit_index} #{inspect(entries)})"
         )
-        if (term > state.current_term) do
-          state = %{state | current_term: term}
+        if (term >= state.current_term) do
+          state = %{state | current_term: term, current_leader: leader_id}
           become_follower(state)
         end
         candidate(state, extra_state)
@@ -1014,7 +1017,7 @@ defmodule Raft do
        }} ->
         # TODO: Handle an append entry response as a candidate
         IO.puts(
-          "Candidate received append entry response #{term}," <>
+          "Candidate #{whoami()} received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
         )
         if (term > state.current_term) do
@@ -1032,7 +1035,7 @@ defmodule Raft do
        }} ->
         # TODO: Handle a RequestVote response as a candidate.
         IO.puts(
-          "Candidate received RequestVote " <>
+          "Candidate #{whoami()} received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
         )
         if (term > state.current_term) do
@@ -1048,7 +1051,7 @@ defmodule Raft do
        }} ->
         # TODO: Handle a RequestVoteResposne as a candidate.
         IO.puts(
-          "Candidate received RequestVoteResponse " <>
+          "Candidate #{whoami()} received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)}"
         )
         if (term > state.current_term) do
@@ -1057,9 +1060,11 @@ defmodule Raft do
         end
         if granted do
           extra_state = %{extra_state | voteCount: extra_state.voteCount + 1}
-          if extra_state.voteCount >= length(state.view)/2+1 do #received majority vote
+          IO.puts("Current vote count for candidate #{whoami()} is #{extra_state.voteCount}")
+          if extra_state.voteCount >= Float.ceil(length(state.view)/2) do #received majority vote
             become_leader(state)
           end
+          IO.puts("Candidate #{whoami()} could not become leader.")
           candidate(state, extra_state)
         end
         candidate(state, extra_state)
