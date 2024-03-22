@@ -256,6 +256,26 @@ defmodule Raft do
   end
 
   @doc """
+  Commit entries until commmit_index.
+  """
+  @spec commit_entries(%Raft{}) :: %Raft{}
+  def commit_entries(state) do
+    state = if (state.commit_index > state.last_applied) do
+      start_idx = (state.last_applied + 1)
+      end_idx = state.commit_index
+      state = Enum.reduce((start_idx..end_idx), state, fn log_idx, state ->
+        {_, res} = commit_log_index(state, log_idx)
+        res
+      end)
+      # {_, state} = commit_log_index(state, state.commit_index)
+      # IO.puts("debug 3 #{start_idx} #{end_idx}")
+      # IO.inspect(state)
+      %{state | last_applied: state.commit_index}
+    else state end
+    state 
+  end
+
+  @doc """
   Try to update the commit index. This does not applies the commit.
   """
   @spec try_to_commit(%Raft{}) :: %Raft{}
@@ -425,6 +445,8 @@ defmodule Raft do
   """
   @spec follower(%Raft{is_leader: false}, any()) :: no_return()
   def follower(state, extra_state) do
+    #commit new entries if last applied < commit index
+    state = commit_entries(state)
     receive do
       # Messages that are a part of Raft.
       {sender,
@@ -484,19 +506,6 @@ defmodule Raft do
             state = (
               if (leader_commit_index > state.commit_index) do
                 state = %{state | commit_index: min(leader_commit_index, get_last_log_index(state))}
-                #commit new entries if last applied < commit index
-                state = (if (state.commit_index > state.last_applied) do
-                  start_idx = (state.last_applied + 1)
-                  end_idx = state.commit_index
-                  state = Enum.reduce((start_idx..end_idx), state, fn log_idx, state ->
-                    {_, res} = commit_log_index(state, log_idx)
-                    res
-                  end)
-                  # {_, state} = commit_log_index(state, state.commit_index)
-                  # IO.puts("debug 3 #{start_idx} #{end_idx}")
-                  # IO.inspect(state)
-                  %{state | last_applied: state.commit_index}
-                else state end)
                 # IO.puts("debug 4")
                 # IO.inspect(state)
               else state end
@@ -683,6 +692,7 @@ defmodule Raft do
   """
   @spec leader(%Raft{is_leader: true}, any()) :: no_return()
   def leader(state, extra_state) do
+    # state = commit_entries(state) #TODO
     receive do
       # Messages that are a part of Raft.
       {sender,
@@ -973,6 +983,7 @@ defmodule Raft do
   """
   @spec candidate(%Raft{is_leader: false}, any()) :: no_return()
   def candidate(state, extra_state) do
+    # state = commit_entries(state) #TODO
     receive do
       {sender,
        %Raft.AppendEntryRequest{
@@ -993,7 +1004,7 @@ defmodule Raft do
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        candidate(state, extra_state)
 
       {sender,
        %Raft.AppendEntryResponse{
@@ -1010,7 +1021,7 @@ defmodule Raft do
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        candidate(state, extra_state)
 
       {sender,
        %Raft.RequestVote{
@@ -1028,7 +1039,7 @@ defmodule Raft do
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        candidate(state, extra_state)
 
       {sender,
        %Raft.RequestVoteResponse{
@@ -1044,7 +1055,14 @@ defmodule Raft do
           state = %{state | current_term: term}
           become_follower(state)
         end
-        raise "Not yet implemented"
+        if granted do
+          extra_state = %{extra_state | voteCount: extra_state.voteCount + 1}
+          if extra_state.voteCount >= length(state.view)/2+1 do #received majority vote
+            become_leader(state)
+          end
+          candidate(state, extra_state)
+        end
+        candidate(state, extra_state)
 
       :election_timeout ->
         become_candidate(state)
