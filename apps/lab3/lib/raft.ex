@@ -269,7 +269,7 @@ defmodule Raft do
         res
       end)
       # {_, state} = commit_log_index(state, state.commit_index)
-      # IO.puts("debug 3 #{start_idx} #{end_idx}")
+      # ##IO.puts("debug 3 #{start_idx} #{end_idx}")
       # IO.inspect(state)
       %{state | last_applied: state.commit_index}
     else state end
@@ -281,14 +281,10 @@ defmodule Raft do
   """
   @spec try_to_commit(%Raft{}) :: %Raft{}
   def try_to_commit(state) do
-    IO.puts("In try to commit: #{state.commit_index} #{get_last_log_index(state)}")
     state = if (get_last_log_index(state) > 0) do
       state = ((state.commit_index + 1)..(get_last_log_index(state)) |> Enum.each(fn(log_idx) ->
-        IO.puts("Checking majority commit rule for log idx #{log_idx}.")
         Map.to_list(state.match_index) |> Enum.each(fn(match_idx) ->
-          IO.puts("Checking match idx #{elem(match_idx, 1)} for log idx #{log_idx}.")
           if (elem(match_idx, 1) >= log_idx) && (get_log_entry(state, log_idx).term == state.current_term) do
-            IO.puts("Updating commit idx to #{log_idx}.")
             state = %{state | commit_index: log_idx} #update commit index to largest possible log index
             state
           end
@@ -298,7 +294,7 @@ defmodule Raft do
       )
       state
     end
-    IO.puts("Before returning #{state.commit_index}.")
+    #IO.puts("Before returning #{state.commit_index}.")
     state
   end
 
@@ -431,9 +427,7 @@ defmodule Raft do
   """
   @spec become_follower(%Raft{}) :: no_return()
   def become_follower(state) do
-    # TODO: Do anything you need to when a process
-    # transitions to a follower.
-    # raise "Not yet implemented."  # will probably need to update for transition from leader to follower
+    IO.puts("#{whoami()} is becoming follower.")
     follower(make_follower(reset_election_timer(state)), %{})
   end
 
@@ -459,15 +453,17 @@ defmodule Raft do
          entries: entries,
          leader_commit_index: leader_commit_index
        }} ->
-        # TODO: Handle an AppendEntryRequest received by a
-        # follower
+
         IO.puts(
           "Follower #{whoami()} Received append entry for term #{term} with leader #{leader_id} " <>
             "(#{leader_commit_index} #{inspect(entries)})"
         )
-        state = if (term >= state.current_term) do
-          %{state | current_term: term, current_leader: leader_id, voted_for: nil}
-        else state end
+        #handle newly discovered term or leader
+        state = cond do
+            (term > state.current_term) -> %{state | current_term: term, current_leader: leader_id, voted_for: nil}
+            (term == state.current_term) -> %{state | current_leader: leader_id}
+            true -> state 
+          end
 
         state = (
         if entries do
@@ -481,46 +477,45 @@ defmodule Raft do
           # 4. Append any new entries not already in the log
           # 5. If leaderCommit > commitIndex, set commitIndex =
           # min(leaderCommit, index of last new entry)
-          # IO.puts("debug 1")
-          # IO.inspect(state)
+
           if ((term < state.current_term) || (prev_log_index > get_last_log_index(state)) 
             || (get_last_log_index(state) > 0 && (prev_log_term != get_log_entry(state, prev_log_index).term))) do
             #return Failure
             send(sender,
             %Raft.AppendEntryResponse{
-              term: term, #TODO: doubt
+              term: state.current_term, #TODO: doubt
               log_index: prev_log_index,
               success: false
             })
-            # IO.puts("debug 2")
+            # #IO.puts("debug 2")
             # IO.inspect(state)
             state
           else
             state = (if (logged?(state, prev_log_index + 1)) do #conflicting entry exists
                       truncate_log_at_index(state, prev_log_index + 1)
                     else state end)
-            # IO.puts("debug 6")
+            # #IO.puts("debug 6")
             # IO.inspect(state)
             state = add_log_entries(state, entries)
-            # IO.puts("debug 7")
+            # #IO.puts("debug 7")
             # IO.inspect(state)
             state = (
               if (leader_commit_index > state.commit_index) do
                 state = %{state | commit_index: min(leader_commit_index, get_last_log_index(state))}
-                # IO.puts("debug 4")
+                # #IO.puts("debug 4")
                 # IO.inspect(state)
               else state end
             )
-            # IO.puts("debug 8")
+            # #IO.puts("debug 8")
             # IO.inspect(state)
             #return Success
             send(sender,
               %Raft.AppendEntryResponse{
-                term: term, #TODO: doubt
+                term: state.current_term, #TODO: doubt
                 log_index: prev_log_index,
                 success: true
               })
-            # IO.puts("debug 5")
+            # #IO.puts("debug 5")
             # IO.inspect(state)
             state
           end
@@ -545,7 +540,7 @@ defmodule Raft do
             " index #{index}, succcess #{inspect(succ)} and did nothing."
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term, voted_for: nil}
+          %{state | current_term: term, current_leader: nil, voted_for: nil}
         else state end
         follower(state, extra_state)
 
@@ -562,14 +557,14 @@ defmodule Raft do
             "term = #{term}, candidate = #{candidate}"
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term, voted_for: nil}
+          %{state | current_term: term, current_leader: nil, voted_for: nil}
         else state end
         # 1. Reply false if term < currentTerm (§5.1)
         # 2. If votedFor is null or candidateId, and candidate’s log is at
         # least as up-to-date as receiver’s log, grant vote
         
         if (term < state.current_term) do
-          IO.puts("Follower #{whoami()} vote not granted due to term less than curr term to candidate #{candidate}.")
+          #IO.puts("Follower #{whoami()} vote not granted due to term less than curr term to candidate #{candidate}.")
           send(sender,
             %Raft.RequestVoteResponse{
               term: state.current_term,
@@ -581,14 +576,14 @@ defmodule Raft do
         if ((!state.voted_for) || (state.voted_for == candidate)) && (last_log_index >= get_last_log_index(state)) do
           send(sender,
             %Raft.RequestVoteResponse{
-              term: term,
+              term: state.current_term,
               granted: true
             })
             state = reset_election_timer(state)
             state = %{state | voted_for: candidate}
             follower(state, extra_state)
         else
-          IO.puts("Follower #{whoami()} vote not granted to candidate #{candidate}.")
+          #IO.puts("Follower #{whoami()} vote not granted to candidate #{candidate}.")
           send(sender,
             %Raft.RequestVoteResponse{
               term: state.current_term,
@@ -609,7 +604,7 @@ defmodule Raft do
             "term = #{term}, granted = #{inspect(granted)} and did nothing."
         )
         state = if (term > state.current_term) do
-          %{state | current_term: term, voted_for: nil}
+          %{state | current_term: term, current_leader: nil, voted_for: nil}
         else state end
         follower(state, extra_state)
 
@@ -620,7 +615,7 @@ defmodule Raft do
         become_candidate(state)
 
       {sender, :nop} ->
-        # IO.puts("Server #{whoami()} redirecting client to leader #{state.current_leader}.")
+        # #IO.puts("Server #{whoami()} redirecting client to leader #{state.current_leader}.")
         send(sender, {:redirect, state.current_leader})
         follower(state, extra_state)
 
@@ -671,6 +666,7 @@ defmodule Raft do
     # Send out any one time messages that need to be sent,
     # you might need to update the call to leader too.
     # initially send empty AppendEntries(heartbeat) to each server
+    IO.puts("#{whoami()} is becoming leader.")
     broadcast_to_others(state,
          %Raft.AppendEntryRequest{
          term: state.current_term,
@@ -714,7 +710,7 @@ defmodule Raft do
             "(#{leader_commit_index})"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term, current_leader: leader_id}
+          state = %{state | current_term: term, current_leader: leader_id, voted_for: nil}
           become_follower(state)
         end
 
@@ -732,7 +728,7 @@ defmodule Raft do
             " index #{index}, succcess #{succ}"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}
           become_follower(state)
         end
 
@@ -748,7 +744,7 @@ defmodule Raft do
           extra_state = Map.put(extra_state, index+1 , Map.get(extra_state, index+1)+1)
           # IO.inspect(extra_state)
           #try to update commit index if possible (majority responded)
-          IO.puts("Trying to commit at leader with commit idx #{state.commit_index} and curr idx #{Map.get(extra_state, index+1)}.")
+          #IO.puts("Trying to commit at leader with commit idx #{state.commit_index} and curr idx #{Map.get(extra_state, index+1)}.")
           #state = try_to_commit(state)
           if index+1 > state.commit_index &&
             Map.get(extra_state, index+1) >= length(state.view)/2+1
@@ -757,7 +753,7 @@ defmodule Raft do
               case commit_log_index(state, index + 1) do
                 {{a,b}, returnState} ->
                   send(a, b)
-                  IO.puts("After trying to commit at leader #{returnState.commit_index} #{returnState.last_applied}.")
+                  #IO.puts("After trying to commit at leader #{returnState.commit_index} #{returnState.last_applied}.")
                   leader(returnState, extra_state)
                 {_, returnState} ->
                   leader(returnState, extra_state)
@@ -767,14 +763,14 @@ defmodule Raft do
           leader(state, extra_state)
           #commit new entries if last applied < commit index
           # if (state.commit_index > state.last_applied) do
-          #   IO.puts("Commiting at leader.")
+          #   #IO.puts("Commiting at leader.")
           #   (state.last_applied+1)..state.commit_index |> Enum.each(fn(log_idx) ->
           #     case commit_log_index(state, log_idx) do
           #       {{r,msg}, _} ->
-          #         IO.puts("Leader: Replying success to client")
+          #         #IO.puts("Leader: Replying success to client")
           #         send(r, msg) #reply to client on successful commit 
           #       _ ->
-          #         IO.puts("Leader: Nothing to do.")
+          #         #IO.puts("Leader: Nothing to do.")
           #     end
           #   end)
           #   state = %{state | last_applied: state.commit_index}
@@ -809,8 +805,8 @@ defmodule Raft do
             "term = #{term}, candidate = #{candidate}"
         )
         if (term > state.current_term) do
-          IO.puts("Leader #{whoami()} converting to follower.")
-          state = %{state | current_term: term}
+          #IO.puts("Leader #{whoami()} converting to follower.")
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}
           become_follower(state)
         end
         leader(state, extra_state)
@@ -826,7 +822,7 @@ defmodule Raft do
             "term = #{term}, granted = #{inspect(granted)}"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}
           become_follower(state)
         end
         leader(state, extra_state)
@@ -835,7 +831,7 @@ defmodule Raft do
         broadcast_to_others(state,
          %Raft.AppendEntryRequest{
          term: state.current_term,
-         leader_id: state.current_leader,
+         leader_id: whoami(),
          prev_log_index: nil,
          prev_log_term: nil,
          entries: nil,
@@ -851,7 +847,7 @@ defmodule Raft do
       {sender, :nop} ->
         # TODO: entry is the log entry that you need to
         # append.
-        IO.puts("Leader #{whoami()} got nop from client.")
+        #IO.puts("Leader #{whoami()} got nop from client.")
         entry =
           Raft.LogEntry.nop(
             get_last_log_index(state) + 1,
@@ -860,15 +856,15 @@ defmodule Raft do
           )
 
         # append entry to local log, respond after entry applied to state 
-        state = add_log_entries(state, [entry])
         broadcast_to_others(state, %Raft.AppendEntryRequest{ #broadcasting once is enough since no packet loss
          term: state.current_term,
-         leader_id: state.current_leader,
-         prev_log_index: get_last_log_index(state)-1,
+         leader_id: whoami(),
+         prev_log_index: get_last_log_index(state),
          prev_log_term: get_last_log_term(state), #TODO : change this
          entries: [entry],
          leader_commit_index: state.commit_index
        })
+        state = add_log_entries(state, [entry])
 
         #using extra state to record number of successful responses to client requests
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
@@ -885,15 +881,15 @@ defmodule Raft do
             item
           )
         # append entry to local log, respond after entry applied to state 
-        state = add_log_entries(state, [entry])
         broadcast_to_others(state, %Raft.AppendEntryRequest{ #broadcasting once is enough since no packet loss
          term: state.current_term,
-         leader_id: state.current_leader,
-         prev_log_index: get_last_log_index(state)-1,
+         leader_id: whoami(),
+         prev_log_index: get_last_log_index(state),
          prev_log_term: get_last_log_term(state), #TODO : change this
          entries: [entry],
          leader_commit_index: state.commit_index
        })
+        state = add_log_entries(state, [entry])
         #using extra state to record client requests
         #
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
@@ -909,15 +905,15 @@ defmodule Raft do
             sender
           )
         # append entry to local log, respond after entry applied to state machine
-        state = add_log_entries(state, [entry])
-        broadcast_to_others(state, %Raft.AppendEntryRequest{
+        broadcast_to_others(state, %Raft.AppendEntryRequest{ #broadcasting once is enough since no packet loss
          term: state.current_term,
-         leader_id: state.current_leader,
-         prev_log_index: get_last_log_index(state)-1,
+         leader_id: whoami(),
+         prev_log_index: get_last_log_index(state),
          prev_log_term: get_last_log_term(state), #TODO : change this
          entries: [entry],
          leader_commit_index: state.commit_index
        })
+        state = add_log_entries(state, [entry])
         #using extra state to record client requests
         extra_state = Map.put(extra_state, get_last_log_index(state) , 1)
         leader(reset_heartbeat_timer(state), extra_state)
@@ -966,6 +962,7 @@ defmodule Raft do
     # • Vote for self
     # • Reset election timer
     # • Send RequestVote RPCs to all other servers
+    IO.puts("#{whoami()} is becoming candidate.")
     state = %{state | current_term: state.current_term+1, voted_for: whoami()}
     state = reset_election_timer(state)
     broadcast_to_others(state, %Raft.RequestVote{
@@ -1003,8 +1000,12 @@ defmodule Raft do
             "with leader #{leader_id} " <>
             "(#{leader_commit_index} #{inspect(entries)})"
         )
-        if (term >= state.current_term) do
-          state = %{state | current_term: term, current_leader: leader_id}
+        if (term > state.current_term) do
+          state = %{state | current_term: term, current_leader: leader_id, voted_for: nil}
+          become_follower(state)
+        end
+        if (term == state.current_term) do
+          state = %{state | current_leader: leader_id}
           become_follower(state)
         end
         candidate(state, extra_state)
@@ -1021,7 +1022,7 @@ defmodule Raft do
             " index #{index}, succcess #{succ}"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}     
           become_follower(state)
         end
         candidate(state, extra_state)
@@ -1039,7 +1040,7 @@ defmodule Raft do
             "term = #{term}, candidate = #{candidate}"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}
           become_follower(state)
         end
         candidate(state, extra_state)
@@ -1055,16 +1056,16 @@ defmodule Raft do
             "term = #{term}, granted = #{inspect(granted)}"
         )
         if (term > state.current_term) do
-          state = %{state | current_term: term}
+          state = %{state | current_term: term, current_leader: nil, voted_for: nil}
           become_follower(state)
         end
         if granted do
           extra_state = %{extra_state | voteCount: extra_state.voteCount + 1}
-          IO.puts("Current vote count for candidate #{whoami()} is #{extra_state.voteCount}")
+          #IO.puts("Current vote count for candidate #{whoami()} is #{extra_state.voteCount}")
           if extra_state.voteCount >= Float.ceil(length(state.view)/2) do #received majority vote
             become_leader(state)
           end
-          IO.puts("Candidate #{whoami()} could not become leader.")
+          #IO.puts("Candidate #{whoami()} could not become leader.")
           candidate(state, extra_state)
         end
         candidate(state, extra_state)
@@ -1151,7 +1152,7 @@ defmodule Raft.Client do
   @spec nop(%Client{}) :: {:ok, %Client{}}
   def nop(client) do
     leader = client.leader
-    IO.puts("Client sending nop to server #{leader}.")
+    #IO.puts("Client sending nop to server #{leader}.")
     send(leader, :nop)
 
     receive do
