@@ -2,8 +2,6 @@ defmodule Raft do
   @moduledoc """
   An implementation of the Raft consensus protocol.
   """
-  # Shouldn't need to spawn anything from this module, but if you do
-  # you should add spawn to the imports.
   import Emulation, only: [send: 2, timer: 1, now: 0, whoami: 0]
   import Float, only: [ceil: 2]
 
@@ -11,15 +9,8 @@ defmodule Raft do
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
 
   require Fuzzers
-  # This allows you to use Elixir's loggers
-  # for messages. See
-  # https://timber.io/blog/the-ultimate-guide-to-logging-in-elixir/
-  # if you are interested in this. Note we currently purge all logs
-  # below Info
   require Logger
 
-  # This structure contains all the process state
-  # required by the Raft protocol.
   defstruct(
     # The list of current proceses.
     view: nil,
@@ -35,22 +26,6 @@ defmodule Raft do
     # Persistent state on all servers.
     current_term: nil,
     voted_for: nil,
-    # A short note on log structure: The functions that follow
-    # (e.g., get_last_log_index, commit_log_index, etc.) all
-    # assume that the log is a list with later entries (i.e.,
-    # entries with higher index numbers) appearing closer to
-    # the head of the list, and that index numbers start with 1.
-    # For example if the log contains 3 entries committe in term
-    # 2, 2, and 1 we would expect:
-    #
-    # `[{index: 3, term: 2, ..}, {index: 2, term: 2, ..},
-    #     {index: 1, term: 1}]`
-    #
-    # If you change this structure, you will need to change
-    # those functions.
-    #
-    # Finally, it might help to know that two lists can be
-    # concatenated using `l1 ++ l2`
     log: nil,
     # Volatile state on all servers
     commit_index: nil,
@@ -206,13 +181,6 @@ defmodule Raft do
     if index <= 0 || length(state.log) < index do
       :noentry
     else
-      # Note that entry indexes are all 1, which in
-      # turn means that we expect commit indexes to
-      # be 1 indexed. Now a list is a reversed log,
-      # so what we can do here is simple:
-      # Given 0-indexed index i, length(log) - 1 - i
-      # is the ith list element. => length(log) - (i +1),
-      # and hence length(log) - index is what we want.
       correct_idx = length(state.log) - index
       Enum.at(state.log, correct_idx)
     end
@@ -294,7 +262,6 @@ defmodule Raft do
       )
       state
     end
-    #IO.puts("Before returning #{state.commit_index}.")
     state
   end
 
@@ -387,15 +354,8 @@ defmodule Raft do
     |> Enum.map(fn pid -> send(pid, message) end)
   end
 
-  # END OF UTILITY FUNCTIONS. You should not need to (but are allowed to)
-  # change any of the code above this line, but will definitely need to
-  # change the code that follows.
-
   # This function should cancel the current
-  # election timer, and set  a new one. You can use
-  # `get_election_time` defined above to get a
-  # randomized election timeout. You might need
-  # to call this function from within your code.
+  # election timer, and set  a new one. 
   @spec reset_election_timer(%Raft{}) :: %Raft{}
   defp reset_election_timer(state) do
     # Set a new election timer
@@ -407,13 +367,10 @@ defmodule Raft do
   end
 
   # This function should cancel the current
-  # hearbeat timer, and set  a new one. You can
-  # get heartbeat timeout from `state.heartbeat_timeout`.
-  # You might need to call this from your code.
+  # hearbeat timer, and set  a new one. 
   @spec reset_heartbeat_timer(%Raft{}) :: %Raft{}
   defp reset_heartbeat_timer(state) do
     # Set a new heartbeat timer.
-    # You might find `save_heartbeat_timer` of use.
     if state.heartbeat_timer do
       Emulation.cancel_timer(state.heartbeat_timer) 
     end
@@ -434,9 +391,6 @@ defmodule Raft do
   @doc """
   This function implements the state machine for a process
   that is currently a follower.
-
-  `extra_state` can be used to hod anything that you find convenient
-  when building your implementation.
   """
   @spec follower(%Raft{is_leader: false}, any()) :: no_return()
   def follower(state, extra_state) do
@@ -663,9 +617,7 @@ defmodule Raft do
   """
   @spec become_leader(%Raft{is_leader: false}) :: no_return()
   def become_leader(state) do
-    # Send out any one time messages that need to be sent,
-    # you might need to update the call to leader too.
-    # initially send empty AppendEntries(heartbeat) to each server
+    # Send out any one time messages that need to be sent
     IO.puts("#{whoami()} is becoming leader.")
     broadcast_to_others(state,
          %Raft.AppendEntryRequest{
@@ -683,16 +635,10 @@ defmodule Raft do
   @doc """
   This function implements the state machine for a process
   that is currently the leader.
-
-  `extra_state` can be used to hold any additional information.
-  HINT: It might be useful to track the number of responses
-  received for each AppendEntry request.
   """
   @spec leader(%Raft{is_leader: true}, any()) :: no_return()
   def leader(state, extra_state) do
-    # state = commit_entries(state) #TODO
     receive do
-      # Messages that are a part of Raft.
       {sender,
        %Raft.AppendEntryRequest{
          term: term,
@@ -702,7 +648,6 @@ defmodule Raft do
          entries: entries,
          leader_commit_index: leader_commit_index
        }} ->
-        # TODO: Handle an AppendEntryRequest seen by the leader.
         IO.puts(
           "Leader #{whoami()} Received append entry for term #{term} with leader #{
             leader_id
@@ -722,7 +667,6 @@ defmodule Raft do
          log_index: index,
          success: succ
        }} ->
-        # TODO: Handle an AppendEntryResposne received by the leader.
         IO.puts(
           "Leader #{whoami()} received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
@@ -740,9 +684,7 @@ defmodule Raft do
           state = %{state | match_index:
           Map.put(state.match_index, sender, index + 1)}
           #increment number of responses for client request
-          # IO.inspect(extra_state)
           extra_state = Map.put(extra_state, index+1 , Map.get(extra_state, index+1)+1)
-          # IO.inspect(extra_state)
           #try to update commit index if possible (majority responded)
           #IO.puts("Trying to commit at leader with commit idx #{state.commit_index} and curr idx #{Map.get(extra_state, index+1)}.")
           #state = try_to_commit(state)
@@ -753,7 +695,6 @@ defmodule Raft do
               case commit_log_index(state, index + 1) do
                 {{a,b}, returnState} ->
                   send(a, b)
-                  #IO.puts("After trying to commit at leader #{returnState.commit_index} #{returnState.last_applied}.")
                   leader(returnState, extra_state)
                 {_, returnState} ->
                   leader(returnState, extra_state)
@@ -761,20 +702,6 @@ defmodule Raft do
             end
           end
           leader(state, extra_state)
-          #commit new entries if last applied < commit index
-          # if (state.commit_index > state.last_applied) do
-          #   #IO.puts("Commiting at leader.")
-          #   (state.last_applied+1)..state.commit_index |> Enum.each(fn(log_idx) ->
-          #     case commit_log_index(state, log_idx) do
-          #       {{r,msg}, _} ->
-          #         #IO.puts("Leader: Replying success to client")
-          #         send(r, msg) #reply to client on successful commit 
-          #       _ ->
-          #         #IO.puts("Leader: Nothing to do.")
-          #     end
-          #   end)
-          #   state = %{state | last_applied: state.commit_index}
-          # end
         else #handle failed responses
           #decrement next index of the sender
           state = %{state | next_index:
@@ -840,14 +767,8 @@ defmodule Raft do
          
         leader(reset_heartbeat_timer(state), extra_state)
 
-      # Messages from external clients. For all of what follows
-      # you should send the `sender` an :ok (see `Raft.Client`
-      # below) only after the request has completed, i.e., after
-      # the log entry corresponding to the request has been **committed**.
+      # Messages from external clients. 
       {sender, :nop} ->
-        # TODO: entry is the log entry that you need to
-        # append.
-        #IO.puts("Leader #{whoami()} got nop from client.")
         entry =
           Raft.LogEntry.nop(
             get_last_log_index(state) + 1,
@@ -860,7 +781,7 @@ defmodule Raft do
          term: state.current_term,
          leader_id: whoami(),
          prev_log_index: get_last_log_index(state),
-         prev_log_term: get_last_log_term(state), #TODO : change this
+         prev_log_term: get_last_log_term(state), 
          entries: [entry],
          leader_commit_index: state.commit_index
        })
@@ -871,8 +792,6 @@ defmodule Raft do
         leader(reset_heartbeat_timer(state), extra_state)
 
       {sender, {:enq, item}} ->
-        # entry is the log entry that you need to
-        # append.
         entry =
           Raft.LogEntry.enqueue(
             get_last_log_index(state) + 1,
@@ -885,7 +804,7 @@ defmodule Raft do
          term: state.current_term,
          leader_id: whoami(),
          prev_log_index: get_last_log_index(state),
-         prev_log_term: get_last_log_term(state), #TODO : change this
+         prev_log_term: get_last_log_term(state), 
          entries: [entry],
          leader_commit_index: state.commit_index
        })
@@ -896,8 +815,6 @@ defmodule Raft do
         leader(reset_heartbeat_timer(state), extra_state)
 
       {sender, :deq} ->
-        # entry is the log entry that you need to
-        # append.
         entry =
           Raft.LogEntry.dequeue(
             get_last_log_index(state) + 1,
@@ -909,7 +826,7 @@ defmodule Raft do
          term: state.current_term,
          leader_id: whoami(),
          prev_log_index: get_last_log_index(state),
-         prev_log_term: get_last_log_term(state), #TODO : change this
+         prev_log_term: get_last_log_term(state), 
          entries: [entry],
          leader_commit_index: state.commit_index
        })
@@ -977,9 +894,6 @@ defmodule Raft do
   @doc """
   This function implements the state machine for a process
   that is currently a candidate.
-
-  `extra_state` can be used to store any additional information
-  required, e.g., to count the number of votes received.
   """
   @spec candidate(%Raft{is_leader: false}, any()) :: no_return()
   def candidate(state, extra_state) do
@@ -1016,7 +930,7 @@ defmodule Raft do
          log_index: index,
          success: succ
        }} ->
-        # TODO: Handle an append entry response as a candidate
+        # Handle an append entry response as a candidate
         IO.puts(
           "Candidate #{whoami()} received append entry response #{term}," <>
             " index #{index}, succcess #{succ}"
@@ -1034,7 +948,7 @@ defmodule Raft do
          last_log_index: last_log_index,
          last_log_term: last_log_term
        }} ->
-        # TODO: Handle a RequestVote response as a candidate.
+        # Handle a RequestVote response as a candidate.
         IO.puts(
           "Candidate #{whoami()} received RequestVote " <>
             "term = #{term}, candidate = #{candidate}"
@@ -1050,7 +964,7 @@ defmodule Raft do
          term: term,
          granted: granted
        }} ->
-        # TODO: Handle a RequestVoteResposne as a candidate.
+        # Handle a RequestVoteResposne as a candidate.
         IO.puts(
           "Candidate #{whoami()} received RequestVoteResponse " <>
             "term = #{term}, granted = #{inspect(granted)}"
@@ -1061,11 +975,9 @@ defmodule Raft do
         end
         if granted do
           extra_state = %{extra_state | voteCount: extra_state.voteCount + 1}
-          #IO.puts("Current vote count for candidate #{whoami()} is #{extra_state.voteCount}")
           if extra_state.voteCount >= Float.ceil(length(state.view)/2) do #received majority vote
             become_leader(state)
           end
-          #IO.puts("Candidate #{whoami()} could not become leader.")
           candidate(state, extra_state)
         end
         candidate(state, extra_state)
